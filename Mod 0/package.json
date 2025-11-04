@@ -1,0 +1,26 @@
+{
+  "name": "monorepo-raiz",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "clean": "turbo clean"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "turbo": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "eslint": "latest",
+    "tailwindcss": "latest",
+    "postcss": "latest",
+    "autoprefixer": "latest",
+    "wrangler": "latest"
+  }
+}
