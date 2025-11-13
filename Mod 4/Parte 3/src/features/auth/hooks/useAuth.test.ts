@@ -1,146 +1,210 @@
-/*
- * TAREFA: /packages/web/src/features/auth/hooks/useAuth.test.ts
- * [cite_start]PLANO: [cite: 45, 46, 47, 48, 49]
- *
- * Testar o hook (store Zustand) useAuth.
- * [cite_start]O objetivo é [cite: 48] garantir que o estado (usuário, sessão, loading)
- * é inicializado corretamente e reage a eventos de autenticação
- * (login/logout) disparados pelo listener onAuthStateChange.
- */
+import { renderHook, waitFor, act } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { vi } from 'vitest';
+import React, { ReactNode } from 'react';
+import { useAuth } from './useAuth';
+import { AuthServiceContext } from '../contexts/AuthServiceProvider';
+import type { IAuthService, LoginCredentials } from '../services/IAuthService';
+import type { Session, User, AuthResponse } from '@supabase/supabase-js';
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// --- Mocks ---
 
-// 1. Mocks
-// Mockar o cliente Supabase ANTES de importar o store,
-// pois o store chama o supabase na inicialização.
+// Mock de dados da sessão
+const mockUser = { id: '123', email: 'test@example.com' } as User;
+const mockSession = {
+  access_token: 'abc',
+  user: mockUser,
+} as Session;
+const mockAuthCacheData = { user: mockUser, session: mockSession };
 
-let authStateChangeListener: ((_event: string, session: any) => void) | null = null;
-const mockGetSession = vi.fn();
-const mockOnAuthStateChange = vi.fn((_event, callback) => {
-  authStateChangeListener = callback; // Armazena o callback para dispararmos eventos
-  return {
-    data: {
-      subscription: {
-        unsubscribe: vi.fn(),
-      },
-    },
-  };
-});
-
-[cite_start]// Mock do novo caminho do cliente Supabase [cite: 20]
-vi.mock('@/packages/core-supabase/db-client', () => ({
-  supabase: {
-    auth: {
-      getSession: mockGetSession,
-      onAuthStateChange: mockOnAuthStateChange,
-    },
-  },
-}));
-
-// 2. Imports dinâmicos
-// Tipar o store que vamos importar
-type AuthStore = typeof import('../hooks/useAuth').useAuth;
-let useAuth: AuthStore;
-
-// Helper para aguardar a resolução de promessas (ex: getSession)
-const flushPromises = () => new Promise(setImmediate);
-
-[cite_start]// Helper para simular um evento de auth (login/logout) [cite: 48]
-const triggerAuthStateChange = (session: any) => {
-  if (authStateChangeListener) {
-    authStateChangeListener('MOCKED_EVENT', session);
-  }
+// Mock da implementação do IAuthService (Conforme DIP)
+const mockAuthService: IAuthService = {
+  getSession: vi.fn(),
+  onAuthStateChange: vi.fn(),
+  signInWithPassword: vi.fn(),
+  signOut: vi.fn(),
 };
 
-// 3. Setup dos Testes
-beforeEach(async () => {
-  // Limpa mocks e o listener
-  vi.clearAllMocks();
-  authStateChangeListener = null;
-  
-  // Define o mock padrão para getSession (usuário deslogado)
-  mockGetSession.mockResolvedValue({ data: { session: null } });
-  
-  // Reseta os módulos do Vitest para forçar a re-importação do store,
-  // o que fará com que ele use os mocks frescos desta execução.
-  vi.resetModules();
-  useAuth = (await import('../hooks/useAuth')).useAuth;
-  
-  // Na importação, o store define loading=true
-  expect(useAuth.getState().loading).toBe(true);
+// --- Wrapper de Teste ---
 
-  // Aguarda a resolução do mockGetSession()
-  await flushPromises();
-});
-
-afterEach(() => {
-  vi.clearAllMocks();
-});
-
-// 4. Suíte de Testes
-describe('useAuth (Zustand Hook)', () => {
-
-  it('deve inicializar deslogado e parar o loading após getSession', async () => {
-    // Verificações pós-flush (no beforeEach)
-    expect(useAuth.getState().loading).toBe(false);
-    expect(useAuth.getState().user).toBe(null);
-    expect(useAuth.getState().session).toBe(null);
-    
-    [cite_start]// Verifica se os métodos do Supabase foram chamados na inicialização [cite: 12, 181, 185]
-    expect(mockGetSession).toHaveBeenCalledTimes(1);
-    expect(mockOnAuthStateChange).toHaveBeenCalledTimes(1);
+// Cria um QueryClient novo para cada teste
+const createTestQueryClient = () =>
+  new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false, // Desabilita retries para testes
+      },
+    },
   });
 
-  it('deve inicializar logado se getSession retornar uma sessão ativa', async () => {
-    const mockUser = { id: '123', email: 'test@test.com' };
-    const mockSession = { access_token: 'abc', user: mockUser };
-    
-    // Configura o mock ANTES da importação
-    mockGetSession.mockResolvedValue({ data: { session: mockSession } });
-    
-    // Re-importa o store para usar o novo mock de getSession
-    vi.resetModules();
-    useAuth = (await import('../hooks/useAuth')).useAuth;
-    
-    // Estado inicial (antes do async)
-    expect(useAuth.getState().loading).toBe(true);
-    
-    // Aguarda o async
-    await flushPromises();
+// Wrapper que provê o QueryClient e o Serviço mockado
+const createWrapper = (
+  client: QueryClient,
+  service: IAuthService,
+) => {
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>
+      <AuthServiceContext.Provider value={service}>
+        {children}
+      </AuthServiceContext.Provider>
+    </QueryClientProvider>
+  );
+};
 
-    // Estado final
-    expect(useAuth.getState().loading).toBe(false);
-    expect(useAuth.getState().user).toBe(mockUser);
-    expect(useAuth.getState().session).toBe(mockSession);
+// --- Testes ---
+
+describe('useAuth Hook', () => {
+  let queryClient: QueryClient;
+
+  // Reseta os mocks e o queryClient antes de cada teste
+  beforeEach(() => {
+    queryClient = createTestQueryClient();
+    vi.resetAllMocks();
   });
 
-  it('deve atualizar o estado para logado em um evento SIGNED_IN (login)', () => {
-    // Estado inicial (garantido pelo beforeEach)
-    expect(useAuth.getState().user).toBe(null);
+  /**
+   * Teste 1: Conforme Plano - Testar se o useQuery é chamado.
+   * Verifica se o hook busca a sessão inicial (getSession) ao montar.
+   */
+  it('should fetch the initial session using useQuery on mount', async () => {
+    // Configuração: getSession retorna dados mockados
+    mockAuthService.getSession.mockResolvedValue(mockAuthCacheData);
 
-    const mockUser = { id: '456', email: 'login@test.com' };
-    const mockSession = { access_token: 'xyz', user: mockUser };
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: createWrapper(queryClient, mockAuthService),
+    });
 
-    [cite_start]// Simula o evento de login [cite: 48]
-    triggerAuthStateChange(mockSession);
+    // Estado inicial de loading
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.data).toBeUndefined();
 
-    // Verifica o novo estado
-    expect(useAuth.getState().user).toBe(mockUser);
-    expect(useAuth.getState().session).toBe(mockSession);
+    // Aguarda a query resolver
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    // Verificação:
+    expect(mockAuthService.getSession).toHaveBeenCalledTimes(1);
+    expect(result.current.data).toEqual(mockAuthCacheData);
+    expect(result.current.user).toEqual(mockUser);
+    expect(result.current.session).toEqual(mockSession);
   });
 
-  it('deve atualizar o estado para deslogado em um evento SIGNED_OUT (logout)', () => {
-    // 1. Simula o login primeiro
-    const mockUser = { id: '456', email: 'login@test.com' };
-    const mockSession = { access_token: 'xyz', user: mockUser };
-    triggerAuthStateChange(mockSession);
-    expect(useAuth.getState().user).toBe(mockUser); // Garante que estava logado
+  /**
+   * Teste 2: Conforme Plano - Testar se o onAuthStateChange atualiza o queryClient.
+   * Verifica se o listener de auth está configurado e atualiza o cache.
+   */
+  it('should update query cache when onAuthStateChange fires', async () => {
+    // Configuração inicial (sem sessão)
+    mockAuthService.getSession.mockResolvedValue({ user: null, session: null });
+    
+    // Captura o callback passado para o listener
+    let authStateCallback: (session: Session | null) => void = () => {};
+    mockAuthService.onAuthStateChange.mockImplementation((callback) => {
+      authStateCallback = callback;
+      return () => {}; // Retorna função de unsubscribe
+    });
 
-    [cite_start]// 2. Simula o evento de logout [cite: 48]
-    triggerAuthStateChange(null);
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: createWrapper(queryClient, mockAuthService),
+    });
 
-    // Verifica o estado final
-    expect(useAuth.getState().user).toBe(null);
-    expect(useAuth.getState().session).toBe(null);
+    // Aguarda a query inicial (usuário deslogado)
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    expect(result.current.user).toBeNull();
+    expect(mockAuthService.onAuthStateChange).toHaveBeenCalledTimes(1);
+
+    // Simulação: O authService dispara um evento de login
+    act(() => {
+      authStateCallback(mockSession);
+    });
+
+    // Verificação: O cache (e o hook) devem ser atualizados
+    await waitFor(() => {
+      expect(result.current.data).toEqual(mockAuthCacheData);
+      expect(result.current.user).toEqual(mockUser);
+    });
+  });
+
+  /**
+   * Teste 3: Conforme Plano - Testar se loginMutation.mutate chama authService.signInWithPassword.
+   * Verifica se a mutação de login chama o serviço e atualiza o cache.
+   */
+  it('should call signInWithPassword and update cache on loginMutation success', async () => {
+    // Configuração inicial (sem sessão)
+    mockAuthService.getSession.mockResolvedValue({ user: null, session: null });
+
+    // Configuração da mutação
+    const loginCredentials: LoginCredentials = {
+      email: 'test@example.com',
+      password: 'password123',
+    };
+    const mockAuthResponse = {
+      data: { user: mockUser, session: mockSession },
+      error: null,
+    } as AuthResponse;
+    mockAuthService.signInWithPassword.mockResolvedValue(mockAuthResponse);
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: createWrapper(queryClient, mockAuthService),
+    });
+
+    // Aguarda a query inicial
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.user).toBeNull();
+
+    // Execução: Chama a mutação de login
+    act(() => {
+      result.current.loginMutation.mutate(loginCredentials);
+    });
+
+    // Verificação:
+    await waitFor(() => {
+      expect(result.current.loginMutation.isSuccess).toBe(true);
+    });
+    
+    // 1. Chamou o serviço com os dados corretos
+    expect(mockAuthService.signInWithPassword).toHaveBeenCalledWith(loginCredentials);
+    
+    // 2. Atualizou o cache do queryClient
+    expect(result.current.data).toEqual(mockAuthCacheData);
+    expect(result.current.user).toEqual(mockUser);
+  });
+
+  /**
+   * Teste 4: (Complementar ao Plano)
+   * Verifica se a mutação de logout chama o serviço e limpa o cache.
+   */
+  it('should call signOut and clear cache on logoutMutation success', async () => {
+    // Configuração inicial (COM sessão)
+    mockAuthService.getSession.mockResolvedValue(mockAuthCacheData);
+    mockAuthService.signOut.mockResolvedValue(undefined); // signOut retorna void
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: createWrapper(queryClient, mockAuthService),
+    });
+
+    // Aguarda a query inicial (usuário logado)
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.user).toEqual(mockUser);
+
+    // Execução: Chama a mutação de logout
+    act(() => {
+      result.current.logoutMutation.mutate();
+    });
+
+    // Verificação:
+    await waitFor(() => {
+      expect(result.current.logoutMutation.isSuccess).toBe(true);
+    });
+
+    // 1. Chamou o serviço
+    expect(mockAuthService.signOut).toHaveBeenCalledTimes(1);
+    
+    // 2. Limpou o cache do queryClient
+    expect(result.current.data).toEqual({ user: null, session: null });
+    expect(result.current.user).toBeNull();
   });
 });

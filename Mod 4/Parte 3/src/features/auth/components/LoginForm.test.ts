@@ -1,165 +1,195 @@
-/*
- * TAREFA: /packages/web/src/features/auth/components/LoginForm.test.ts
- * [cite_start]PLANO: Testar a validação (Zod) e a submissão do formulário (LoginForm.test.ts). [cite: 49]
- */
-
+import * as React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+
 import { LoginForm } from './LoginForm';
+import { useAuth } from '../hooks/useAuth';
 
-// Mockar o cliente Supabase
-const mockSignInWithPassword = vi.fn();
-vi.mock('@/packages/core-supabase/db-client', () => ({
-  supabase: {
-    auth: {
-      signInWithPassword: mockSignInWithPassword,
-    },
-  },
-}));
+/**
+ * Princípio SoC (2.5) / PTE (2.15):
+ * Mockamos o hook 'useAuth' para isolar o componente 'LoginForm'.
+ * O teste do LoginForm foca apenas na UI (Nível 1) e no estado do formulário,
+ * não na lógica de autenticação (que é testada em useAuth.test.ts).
+ */
+vi.mock('../hooks/useAuth');
 
-// Mockar os ícones lucide-react para testes limpos
-vi.mock('lucide-react', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('lucide-react')>();
-  return {
-    ...mod,
-    Mail: () => <svg data-testid="mail-icon" />,
-    Lock: () => <svg data-testid="lock-icon" />,
-    AlertCircle: () => <svg data-testid="alert-icon" />,
-    Scissors: () => <svg data-testid="scissors-icon" />,
-  };
-});
+// Criamos um mock tipado para 'useAuth'
+const mockedUseAuth = vi.mocked(useAuth);
 
-describe('LoginForm.tsx', () => {
+// Criamos um mock para a função 'mutate' da mutação
+const mockMutate = vi.fn();
 
+// Tipo helper para o retorno do mock de useAuth
+type MockUseAuthReturnValue = ReturnType<typeof useAuth>;
+
+describe('LoginForm', () => {
+  // Resetamos os mocks antes de cada teste
   beforeEach(() => {
-    vi.clearAllMocks(); // Limpa mocks entre os testes
-    mockSignInWithPassword.mockResolvedValue({ error: null }); // Sucesso por padrão
+    vi.clearAllMocks();
+
+    // Configuração padrão do mock (estado "idle")
+    mockedUseAuth.mockReturnValue({
+      loginMutation: {
+        mutate: mockMutate,
+        isPending: false,
+        isError: false,
+        error: null,
+      },
+    } as unknown as MockUseAuthReturnValue); // Usamos 'unknown' para simplificar o mock
   });
 
-  it('deve renderizar o formulário de login corretamente', () => {
-    render(<LoginForm />);
+  /**
+   * Princípio Demeter (2.10) / PTE (2.15):
+   * Testa a lógica de validação do Zod, que está *localizada* no componente.
+   */
+  describe('Validação do Formulário (Demeter)', () => {
+    it('deve exibir erros de validação para campos obrigatórios', async () => {
+      render(<LoginForm />);
 
-    // Verifica o header
-    expect(screen.getByText('SalonFlow')).toBeInTheDocument();
-    expect(screen.getByText('Bem-vindo de volta!')).toBeInTheDocument();
-    
-    // Verifica os campos do formulário
-    expect(screen.getByLabelText(/Email/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('voce@exemplo.com')).toBeInTheDocument();
-    
-    expect(screen.getByLabelText(/Senha/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('••••••••')).toBeInTheDocument();
+      const submitButton = screen.getByRole('button', { name: /entrar/i });
+      fireEvent.click(submitButton);
 
-    // Verifica o botão
-    expect(screen.getByRole('button', { name: /Entrar/i })).toBeInTheDocument();
+      // Espera que as mensagens de erro do Zod apareçam
+      expect(
+        await screen.findByText(/o e-mail é obrigatório/i)
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText(/a senha é obrigatória/i)
+      ).toBeInTheDocument();
 
-    // Verifica os ícones
-    expect(screen.getByTestId('mail-icon')).toBeInTheDocument();
-    expect(screen.getByTestId('lock-icon')).toBeInTheDocument();
-    expect(screen.getByTestId('scissors-icon')).toBeInTheDocument();
+      // A mutação não deve ser chamada se a validação falhar
+      expect(mockMutate).not.toHaveBeenCalled();
+    });
+
+    it('deve exibir erro para e-mail inválido', async () => {
+      render(<LoginForm />);
+
+      fireEvent.change(screen.getByLabelText(/email/i), {
+        target: { value: 'email-invalido' },
+      });
+      fireEvent.change(screen.getByLabelText(/senha/i), {
+        target: { value: 'senha123' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /entrar/i }));
+
+      expect(
+        await screen.findByText(/por favor, insira um e-mail válido/i)
+      ).toBeInTheDocument();
+      expect(mockMutate).not.toHaveBeenCalled();
+    });
+
+    it('deve exibir erro para senha curta', async () => {
+      render(<LoginForm />);
+
+      fireEvent.change(screen.getByLabelText(/email/i), {
+        target: { value: 'teste@email.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/senha/i), {
+        target: { value: '123' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /entrar/i }));
+
+      expect(
+        await screen.findByText(/a senha deve ter pelo menos 6 caracteres/i)
+      ).toBeInTheDocument();
+      expect(mockMutate).not.toHaveBeenCalled();
+    });
   });
 
-  it('deve mostrar erros de validação (Zod) para campos inválidos', async () => {
-    const user = userEvent.setup();
-    render(<LoginForm />);
-    
-    const submitButton = screen.getByRole('button', { name: /Entrar/i });
-    
-    // 1. Tenta submeter vazio
-    await user.click(submitButton);
+  /**
+   * Teste de integração (Nível 1 -> Nível 3)
+   * Verifica se o formulário válido chama o "amigo imediato" (loginMutation.mutate).
+   */
+  describe('Submissão Válida', () => {
+    it('deve chamar loginMutation.mutate com os dados corretos ao submeter', async () => {
+      render(<LoginForm />);
 
-    // Espera os erros aparecerem
-    expect(await screen.findByText('Email inválido')).toBeInTheDocument();
-    expect(await screen.findByText('A senha deve ter no mínimo 6 caracteres')).toBeInTheDocument();
+      const emailInput = screen.getByLabelText(/email/i);
+      const passwordInput = screen.getByLabelText(/senha/i);
+      const submitButton = screen.getByRole('button', { name: /entrar/i });
 
-    // 2. Digita email inválido
-    const emailInput = screen.getByLabelText(/Email/i);
-    await user.type(emailInput, 'email-invalido');
-    await user.click(submitButton);
-    expect(await screen.findByText('Email inválido')).toBeInTheDocument();
+      const testData = {
+        email: 'teste@exemplo.com',
+        password: 'password123',
+      };
 
-    // 3. Digita senha curta
-    const passwordInput = screen.getByLabelText(/Senha/i);
-    await user.type(passwordInput, '123');
-    await user.click(submitButton);
-    expect(await screen.findByText('A senha deve ter no mínimo 6 caracteres')).toBeInTheDocument();
+      // Preenche o formulário
+      fireEvent.change(emailInput, { target: { value: testData.email } });
+      fireEvent.change(passwordInput, { target: { value: testData.password } });
+
+      // Submete
+      fireEvent.click(submitButton);
+
+      // Espera que a mutação seja chamada com os dados validados
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalledWith(testData);
+      });
+
+      // Garante que nenhuma mensagem de erro de validação apareceu
+      expect(
+        screen.queryByText(/o e-mail é obrigatório/i)
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/a senha é obrigatória/i)
+      ).not.toBeInTheDocument();
+    });
   });
 
-  it('deve chamar supabase.auth.signInWithPassword com os dados corretos ao submeter', async () => {
-    const user = userEvent.setup();
-    render(<LoginForm />);
+  /**
+   * Testes de UI baseados no estado do hook mockado (PGEC / SoC).
+   */
+  describe('Estados da Mutação (UI Feedback)', () => {
+    it('deve exibir estado de loading (spinner) e desabilitar o botão quando isPending é true', () => {
+      // Configura o mock para o estado 'pending'
+      mockedUseAuth.mockReturnValue({
+        loginMutation: {
+          mutate: mockMutate,
+          isPending: true,
+          isError: false,
+          error: null,
+        },
+      } as unknown as MockUseAuthReturnValue);
 
-    const emailInput = screen.getByLabelText(/Email/i);
-    const passwordInput = screen.getByLabelText(/Senha/i);
-    const submitButton = screen.getByRole('button', { name: /Entrar/i });
+      render(<LoginForm />);
 
-    // Preenche o formulário
-    await user.type(emailInput, 'test@example.com');
-    await user.type(passwordInput, 'password123');
+      const submitButton = screen.getByRole('button', { name: /entrando.../i });
 
-    // Submete
-    await user.click(submitButton);
-
-    // Verifica o estado de loading no botão
-    await waitFor(() => {
-      expect(screen.getByText('Aguarde...')).toBeInTheDocument();
+      // Verifica o texto do spinner
+      expect(submitButton).toHaveTextContent(/entrando.../i);
+      // Verifica se o ícone de loader está presente (baseado na classe 'animate-spin' do LoginForm.tsx)
+      expect(submitButton.querySelector('.animate-spin')).toBeInTheDocument();
+      // Verifica se o botão está desabilitado
       expect(submitButton).toBeDisabled();
     });
 
-    // Verifica se a função do Supabase foi chamada corretamente
-    await waitFor(() => {
-      expect(mockSignInWithPassword).toHaveBeenCalledTimes(1);
-      expect(mockSignInWithPassword).toHaveBeenCalledWith({
-        email: 'test@example.com',
-        password: 'password123',
-      });
-    });
+    it('deve exibir um alerta de erro quando isError é true', () => {
+      const mockError = new Error('Credenciais inválidas. Tente novamente.');
 
-    // Verifica se o loading terminou (o auth provider faria o redirect)
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Entrar/i })).toBeInTheDocument();
-      expect(screen.queryByText('Aguarde...')).not.toBeInTheDocument();
-    });
-  });
+      // Configura o mock para o estado 'error'
+      mockedUseAuth.mockReturnValue({
+        loginMutation: {
+          mutate: mockMutate,
+          isPending: false,
+          isError: true,
+          error: mockError,
+        },
+      } as unknown as MockUseAuthReturnValue);
 
-  it('deve exibir uma mensagem de erro se a autenticação falhar', async () => {
-    const user = userEvent.setup();
-    
-    // Configura o mock para retornar um erro
-    const authErrorMessage = 'Invalid login credentials';
-    mockSignInWithPassword.mockResolvedValue({ 
-      error: { message: authErrorMessage } 
-    });
+      render(<LoginForm />);
 
-    render(<LoginForm />);
+      // Verifica se o título do alerta de erro é renderizado
+      expect(screen.getByText(/erro no login/i)).toBeInTheDocument();
+      // Verifica se a mensagem de erro específica é renderizada
+      expect(
+        screen.getByText('Credenciais inválidas. Tente novamente.')
+      ).toBeInTheDocument();
 
-    const emailInput = screen.getByLabelText(/Email/i);
-    const passwordInput = screen.getByLabelText(/Senha/i);
-    const submitButton = screen.getByRole('button', { name: /Entrar/i });
-
-    // Preenche o formulário
-    await user.type(emailInput, 'test@example.com');
-    await user.type(passwordInput, 'wrongpassword');
-    
-    // Submete
-    await user.click(submitButton);
-
-    // Espera o loading...
-    await waitFor(() => {
-      expect(screen.getByText('Aguarde...')).toBeInTheDocument();
-    });
-
-    // Espera a mensagem de erro aparecer
-    await waitFor(() => {
-      expect(screen.getByText(authErrorMessage)).toBeInTheDocument();
-      expect(screen.getByTestId('alert-icon')).toBeInTheDocument();
-    });
-
-    // Verifica se o loading terminou
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Entrar/i })).toBeInTheDocument();
-      expect(screen.queryByText('Aguarde...')).not.toBeInTheDocument();
+      // O botão não deve estar em modo "loading"
+      expect(
+        screen.getByRole('button', { name: /entrar/i })
+      ).not.toBeDisabled();
     });
   });
 });
