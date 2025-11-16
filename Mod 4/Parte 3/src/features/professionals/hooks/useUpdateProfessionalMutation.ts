@@ -1,11 +1,12 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/packages/supabase/supabase-client';
-import { ProfessionalSchema, ProfessionalType } from '@/packages/shared-types';
-import { z } from 'zod';
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+// import { supabase } from '@/packages/supabase/supabase-client'; // <-- REMOVIDO
+import { api } from '@/packages/web/src/lib/api' // <-- ADICIONADO
+import { ProfessionalSchema, ProfessionalType } from '@/packages/shared-types'
+import { z } from 'zod'
 
 // Define the input type for the mutation based on the Zod schema
 // It requires the full professional object, including the ID.
-type UpdateProfessionalInput = z.infer<typeof ProfessionalSchema>;
+type UpdateProfessionalInput = z.infer<typeof ProfessionalSchema>
 
 /**
  * Asynchronous function to update an existing professional in the database.
@@ -15,26 +16,29 @@ type UpdateProfessionalInput = z.infer<typeof ProfessionalSchema>;
  * @returns The updated professional object from the database.
  */
 const updateProfessional = async (professionalData: UpdateProfessionalInput) => {
-  const { id, ...dataToUpdate } = professionalData;
+  const { id, ...dataToUpdate } = professionalData
 
   if (!id) {
-    throw new Error('Professional ID is required for an update operation.');
+    throw new Error('Professional ID is required for an update operation.')
   }
 
-  const { data, error } = await supabase
-    .from('professionals')
-    .update(dataToUpdate)
-    .eq('id', id)
-    .select() // Select the updated row
-    .single(); // Expect a single object back
+  // 1. Chama o endpoint dinâmico com 'param' e 'json'
+  const res = await api.professionals[':id'].$put({
+    param: { id: id.toString() },
+    json: dataToUpdate,
+  })
 
-  if (error) {
-    console.error(`Error updating professional with id ${id}:`, error.message);
-    throw error; // Re-throw the error to be handled by React Query's onError
+  // 2. Tratamento de erro
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ message: res.statusText }))
+    const errorMessage = errorData?.message || 'Failed to update professional'
+    console.error(`Error updating professional with id ${id}:`, errorMessage)
+    throw new Error(errorMessage)
   }
 
-  return data;
-};
+  // 3. Retorna o JSON
+  return await res.json()
+}
 
 /**
  * Hook to update an existing professional.
@@ -45,7 +49,7 @@ const updateProfessional = async (professionalData: UpdateProfessionalInput) => 
  * @returns The result of the useMutation hook.
  */
 export const useUpdateProfessionalMutation = () => {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
   const mutation = useMutation({
     /**
@@ -62,13 +66,13 @@ export const useUpdateProfessionalMutation = () => {
      */
     onSuccess: (updatedProfessional) => {
       // Invalidate the list of all professionals
-      queryClient.invalidateQueries({ queryKey: ['professionals'] });
+      queryClient.invalidateQueries({ queryKey: ['professionals'] })
 
       // Invalidate the specific cache for this individual professional
       if (updatedProfessional?.id) {
         queryClient.invalidateQueries({
           queryKey: ['professional', updatedProfessional.id],
-        });
+        })
       }
     },
 
@@ -78,11 +82,11 @@ export const useUpdateProfessionalMutation = () => {
     onError: (error, variables) => {
       console.error(
         `Failed to update professional with id ${variables.id}:`,
-        error.message,
-      );
+        (error as Error).message,
+      )
       // Here you could show a toast notification to the user
     },
-  });
+  })
 
-  return mutation;
-};
+  return mutation
+}

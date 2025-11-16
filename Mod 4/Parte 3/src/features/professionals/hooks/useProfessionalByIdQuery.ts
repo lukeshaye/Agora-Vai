@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/packages/supabase/supabase-client';
-import { ProfessionalType } from '@/packages/shared-types';
+import { useQuery } from '@tanstack/react-query'
+// import { supabase } from '@/packages/supabase/supabase-client'; // <-- REMOVIDO
+import { api } from '@/packages/web/src/lib/api' // <-- ADICIONADO
+import { ProfessionalType } from '@/packages/shared-types'
 
 /**
  * Hook to fetch a single professional by their ID.
@@ -24,25 +25,29 @@ export const useProfessionalByIdQuery = (id: string | number | undefined) => {
      */
     queryFn: async () => {
       // The 'enabled' flag (below) ensures that 'id' is defined when this function runs.
-      const { data, error } = await supabase
-        .from('professionals')
-        .select('*')
-        .eq('id', id!)
-        .single(); // .single() throws an error if 0 or >1 rows are found
 
-      if (error) {
-        console.error(`Error fetching professional with id ${id}:`, error.message);
-        throw error; // Re-throw the error to be handled by React Query
+      // 1. Chama o endpoint dinâmico
+      const res = await api.professionals[':id'].$get({
+        param: { id: id!.toString() }, // Passa o ID como param
+      })
+
+      // 2. Tratamento de erro
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ message: res.statusText }))
+        const errorMessage = errorData?.message || 'Failed to fetch professional'
+        console.error(`Error fetching professional ${id}:`, errorMessage)
+        throw new Error(errorMessage)
       }
 
-      return data;
+      // 3. Retorna o JSON
+      return await res.json()
     },
 
     /**
      * The query will only execute if 'id' is a truthy value (not undefined, null, 0, or '').
      */
     enabled: !!id,
-  });
+  })
 
-  return query;
-};
+  return query
+}

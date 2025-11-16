@@ -1,10 +1,11 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/packages/supabase/supabase-client';
-import { CreateProfessionalSchema } from '@/packages/shared-types';
-import { z } from 'zod';
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+// import { supabase } from '@/packages/supabase/supabase-client' // <-- REMOVIDO
+import { api } from '@/packages/web/src/lib/api' // <-- ADICIONADO
+import { CreateProfessionalSchema } from '@/packages/shared-types'
+import { z } from 'zod'
 
 // Define the input type for the mutation based on the Zod schema
-type AddProfessionalInput = z.infer<typeof CreateProfessionalSchema>;
+type AddProfessionalInput = z.infer<typeof CreateProfessionalSchema>
 
 /**
  * Asynchronous function to add a new professional to the database.
@@ -14,19 +15,20 @@ type AddProfessionalInput = z.infer<typeof CreateProfessionalSchema>;
  * @returns The newly created professional object from the database.
  */
 const addProfessional = async (professionalData: AddProfessionalInput) => {
-  const { data, error } = await supabase
-    .from('professionals')
-    .insert(professionalData)
-    .select() // Select the newly created row
-    .single(); // Expect a single object back
+  // 1. Chama a abstração com o payload
+  const res = await api.professionals.$post({ json: professionalData })
 
-  if (error) {
-    console.error('Error adding professional:', error.message);
-    throw error; // Re-throw the error to be handled by React Query's onError
+  // 2. Tratamento de erro
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ message: res.statusText }))
+    const errorMessage = errorData?.message || 'Failed to add professional'
+    console.error('Error adding professional:', errorMessage)
+    throw new Error(errorMessage)
   }
 
-  return data;
-};
+  // 3. Retorna o JSON
+  return await res.json()
+}
 
 /**
  * Hook to add a new professional.
@@ -37,7 +39,7 @@ const addProfessional = async (professionalData: AddProfessionalInput) => {
  * @returns The result of the useMutation hook.
  */
 export const useAddProfessionalMutation = () => {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
   const mutation = useMutation({
     /**
@@ -51,7 +53,7 @@ export const useAddProfessionalMutation = () => {
      * ensuring the UI (e.g., data table) displays the new professional.
      */
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['professionals'] });
+      queryClient.invalidateQueries({ queryKey: ['professionals'] })
     },
 
     /**
@@ -59,10 +61,10 @@ export const useAddProfessionalMutation = () => {
      * (Optional but good practice for global error handling or specific logging)
      */
     onError: (error) => {
-      console.error('Failed to add professional:', error.message);
+      console.error('Failed to add professional:', error.message)
       // Here you could show a toast notification to the user
     },
-  });
+  })
 
-  return mutation;
-};
+  return mutation
+}

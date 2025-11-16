@@ -12,32 +12,36 @@
  * removendo a necessidade de filtrar manualmente por `user_id`.
  */
 
-import { useQuery } from "@tanstack/react-query"
-import { supabase } from "@/packages/supabase/supabase-client" // Assumindo caminho padrão do cliente
-import { ProfessionalType } from "@/packages/shared-types" // Assumindo novo caminho de tipos
-import { PostgrestError } from "@supabase/supabase-js"
+import { useQuery } from '@tanstack/react-query'
+// import { supabase } from "@/packages/supabase/supabase-client" // <-- REMOVIDO
+import { api } from '@/packages/web/src/lib/api' // <-- ADICIONADO
+import { ProfessionalType } from '@/packages/shared-types' // Assumindo novo caminho de tipos
+// import { PostgrestError } from "@supabase/supabase-js" // <-- REMOVIDO (Não mais necessário)
 
 /**
  * Define a chave de query para a lista de profissionais.
  */
-export const professionalsQueryKey = ["professionals"]
+export const professionalsQueryKey = ['professionals']
 
 /**
- * Função de busca (queryFn) que busca a lista de profissionais no Supabase.
+ * Função de busca (queryFn) que busca a lista de profissionais via Hono RPC.
  * Exportada para ser reutilizável, se necessário.
  */
 export const fetchProfessionals = async (): Promise<ProfessionalType[]> => {
-  const { data, error } = await supabase
-    .from("professionals")
-    .select("*")
-    .order("name", { ascending: true })
+  // 1. Chama a abstração 'api' (Hono RPC)
+  const res = await api.professionals.$get()
 
-  if (error) {
-    console.error("Erro ao buscar profissionais:", error)
-    throw new Error(error.message)
+  // 2. Implementa o tratamento de erro padrão da API
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ message: res.statusText }))
+    const errorMessage = errorData?.message || 'Failed to fetch professionals'
+    console.error('Error fetching professionals:', errorMessage)
+    throw new Error(errorMessage)
   }
 
-  return data || []
+  // 3. Retorna o JSON
+  const data = await res.json()
+  return (data as ProfessionalType[]) || []
 }
 
 /**
@@ -45,7 +49,7 @@ export const fetchProfessionals = async (): Promise<ProfessionalType[]> => {
  * profissionais do usuário autenticado.
  */
 export const useProfessionalsQuery = () => {
-  return useQuery<ProfessionalType[], PostgrestError>({
+  return useQuery<ProfessionalType[], Error>({ // <-- Tipo de Erro atualizado para Error
     queryKey: professionalsQueryKey,
     queryFn: fetchProfessionals,
   })

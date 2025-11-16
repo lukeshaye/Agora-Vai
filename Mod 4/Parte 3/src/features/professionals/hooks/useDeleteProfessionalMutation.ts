@@ -1,5 +1,6 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/packages/supabase/supabase-client';
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+// import { supabase } from '@/packages/supabase/supabase-client'; // <-- REMOVIDO
+import { api } from '@/packages/web/src/lib/api' // <-- ADICIONADO
 
 /**
  * Asynchronous function to delete a professional from the database.
@@ -9,15 +10,22 @@ import { supabase } from '@/packages/supabase/supabase-client';
  * @returns The result of the delete operation.
  */
 const deleteProfessional = async (id: number) => {
-  const { error } = await supabase.from('professionals').delete().eq('id', id);
+  // 1. Chama o endpoint dinâmico com 'param'
+  const res = await api.professionals[':id'].$delete({
+    param: { id: id.toString() },
+  })
 
-  if (error) {
-    console.error(`Error deleting professional with id ${id}:`, error.message);
-    throw error; // Re-throw the error to be handled by React Query's onError
+  // 2. Tratamento de erro
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({ message: res.statusText }))
+    const errorMessage = errorData?.message || 'Failed to delete professional'
+    console.error(`Error deleting professional with id ${id}:`, errorMessage)
+    throw new Error(errorMessage)
   }
 
-  return { success: true };
-};
+  // 3. Delete não retorna corpo, apenas sucesso
+  return { success: true }
+}
 
 /**
  * Hook to delete a professional.
@@ -28,7 +36,7 @@ const deleteProfessional = async (id: number) => {
  * @returns The result of the useMutation hook.
  */
 export const useDeleteProfessionalMutation = () => {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
 
   const mutation = useMutation({
     /**
@@ -43,7 +51,7 @@ export const useDeleteProfessionalMutation = () => {
      * ensuring the UI (e.g., data table) removes the deleted professional.
      */
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['professionals'] });
+      queryClient.invalidateQueries({ queryKey: ['professionals'] })
     },
 
     /**
@@ -53,10 +61,10 @@ export const useDeleteProfessionalMutation = () => {
       console.error(
         `Failed to delete professional with id ${id}:`,
         (error as Error).message,
-      );
+      )
       // Here you could show a toast notification to the user
     },
-  });
+  })
 
-  return mutation;
-};
+  return mutation
+}
