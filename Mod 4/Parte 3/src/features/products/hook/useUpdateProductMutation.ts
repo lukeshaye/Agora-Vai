@@ -1,10 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/packages/lib/supabase';
+// VIOLAÇÃO CORRIGIDA: Remove a dependência direta do 'supabase' (baixoível).
+// import { supabase } from '@/packages/lib/supabase';
+
+// CORREÇÃO (DIP): Depende da abstração (cliente Hono RPC).
+import { api } from '@/packages/web/src/lib/api';
 import { ProductType } from '@/packages/shared-types';
 
 /**
- * Define a função assíncrona para atualizar um produto existente no Supabase.
- * A lógica é migrada do store.ts (updateProduct).
+ * Define a função assíncrona para atualizar um produto existente através da camada de abstração (API).
  * A função espera receber o objeto completo do produto, incluindo seu ID.
  */
 const updateProduct = async (productData: ProductType) => {
@@ -14,19 +17,24 @@ const updateProduct = async (productData: ProductType) => {
     throw new Error('ID do produto é necessário para atualização.');
   }
 
-  const { data, error } = await supabase
-    .from('products')
-    .update(updateData)
-    .eq('id', id)
-    .select()
-    .single();
+  // A chamada agora usa o cliente 'api' (abstração), não o 'supabase' (detalhe).
+  // Presume-se que existe uma rota 'PUT /products/:id' definida no backend Hono.
+  // O cliente Hono RPC 'put' envia o ID no 'param' e o restante dos dados no 'json'.
+  const res = await api.products[':id'].$put({
+    param: { id: id.toString() },
+    json: updateData,
+  });
 
-  if (error) {
-    console.error('Error updating product:', error.message);
-    throw new Error(error.message);
+  if (!res.ok) {
+    // Tenta extrair uma mensagem de erro do corpo da resposta
+    const errorData = await res.json().catch(() => ({ message: res.statusText }));
+    const errorMessage = errorData?.message || 'Failed to update product';
+
+    console.error('Error updating product:', errorMessage);
+    throw new Error(errorMessage);
   }
 
-  return data;
+  return await res.json();
 };
 
 /**
@@ -40,10 +48,14 @@ export const useUpdateProductMutation = () => {
 
   return useMutation({
     mutationFn: updateProduct,
-    onSuccess: () => {
+    onSuccess: ()(data) => {
       // Invalida o cache de 'products' para forçar um refetch da lista
       // (Princípio CQRS e PGEC)
       queryClient.invalidateQueries({ queryKey: ['products'] });
+
+      // Opcional: Atualizar o cache específico deste item com os dados de retorno
+      // Isso evita um "flash" de dados antigos se o refetch da lista demorar.
+      // queryClient.setQueryData(['products', data.id], data);
     },
     onError: (error) => {
       console.error('Erro ao atualizar produto:', error.message);

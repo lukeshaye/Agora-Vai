@@ -3,24 +3,26 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 
-import { supabase } from '@/packages/lib/supabase';
+// VIOLAÇÃO CORRIGIDA: Remove a dependência de baixoível (supabase)
+// import { supabase } from '@/packages/lib/supabase';
+
+// CORREÇÃO (DIP): Importa a abstração (Hono RPC) para mocká-la
+import { api } from '@/packages/web/src/lib/api';
 import { ProductType } from '@/packages/shared-types';
 import { useProductsQuery } from './useProductsQuery';
 
-// 1. Mockar a chamada ao supabase (Princípio PTE 2.15)
-// A implementação de useProductsQuery chama supabase.from('products').select('*').order(...)
-vi.mock('@/packages/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        order: vi.fn(),
-      })),
-    })),
+// 1. Mockar a chamada à abstração 'api' (Princípio PTE 2.15)
+// A nova implementação de useProductsQuery chama api.products.$get()
+vi.mock('@/packages/web/src/lib/api', () => ({
+  api: {
+    products: {
+      $get: vi.fn(),
+    },
   },
 }));
 
 // Typecasting para facilitar o uso do mock
-const mockedSupabase = supabase as vi.Mocked<typeof supabase>;
+const mockedApiGet = api.products.$get as vi.Mock;
 
 // 2. Criar um wrapper de teste para o React Query
 // Isso garante que cada teste tenha um cache limpo e um QueryClient
@@ -62,10 +64,8 @@ describe('useProductsQuery (Teste de Hook - PTE 2.15)', () => {
   
   it('DEVE estar no estado "isLoading" inicialmente', () => {
     // Arrange
-    // Configura um mock que ainda não resolveu
-    const mockOrder = vi.fn().mockReturnValue(new Promise(() => {})); // Nunca resolve
-    const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
-    mockedSupabase.from.mockReturnValue({ select: mockSelect } as any);
+    // Configura o mock da API para nunca resolver
+    mockedApiGet.mockReturnValue(new Promise(() => {}));
 
     // Act
     const { result } = renderHook(() => useProductsQuery(), {
@@ -85,10 +85,12 @@ describe('useProductsQuery (Teste de Hook - PTE 2.15)', () => {
       { id: 2, name: 'Produto B', price: 2000, quantity: 5, description: 'Desc B', image_url: 'url_b', tenant_id: 't1' },
     ];
 
-    // Mockar a cadeia completa da queryFn (fetchProducts)
-    const mockOrder = vi.fn().mockResolvedValue({ data: mockProducts, error: null });
-    const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
-    mockedSupabase.from.mockReturnValue({ select: mockSelect } as any);
+    // Mockar a resposta da API (Hono) -
+    // A função 'fetchProducts' espera uma resposta com '.ok' e '.json()'
+    mockedApiGet.mockResolvedValue({
+      ok: true,
+      json: async () => mockProducts,
+    });
 
     // Act
     const { result } = renderHook(() => useProductsQuery(), {
@@ -104,20 +106,17 @@ describe('useProductsQuery (Teste de Hook - PTE 2.15)', () => {
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isError).toBe(false);
 
-    // Verifica se o supabase foi chamado com os parâmetros corretos
-    expect(mockedSupabase.from).toHaveBeenCalledWith('products');
-    expect(mockSelect).toHaveBeenCalledWith('*');
-    expect(mockOrder).toHaveBeenCalledWith('name', { ascending: true });
+    // Verifica se a API (abstração) foi chamada
+    expect(mockedApiGet).toHaveBeenCalledTimes(1);
+    expect(mockedApiGet).toHaveBeenCalledWith(); // Verifica se foi chamada sem args
   });
 
-  it('DEVE retornar um erro se a chamada ao supabase falhar', async () => {
+  it('DEVE retornar um erro se a chamada à API falhar (ex: promise rejeitada)', async () => {
     // Arrange
-    const mockError = new Error('Falha na conexão com o banco de dados');
+    const mockError = new Error('Falha na conexão com a API');
 
-    // Mockar a cadeia para retornar um erro
-    const mockOrder = vi.fn().mockResolvedValue({ data: null, error: mockError });
-    const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
-    mockedSupabase.from.mockReturnValue({ select: mockSelect } as any);
+    // Mockar a chamada para rejeitar (simulando falha de rede ou 500)
+    mockedApiGet.mockRejectedValue(mockError);
 
     // Act
     const { result } = renderHook(() => useProductsQuery(), {
@@ -134,12 +133,37 @@ describe('useProductsQuery (Teste de Hook - PTE 2.15)', () => {
     expect(result.current.data).toBeUndefined();
   });
 
-  it('DEVE retornar um array vazio se o supabase retornar "data" como null mas sem erro', async () => {
+   it('DEVE retornar um erro se a resposta da API não for "ok"', async () => {
     // Arrange
-    // (Cenário onde a query funciona mas não há dados, e o Supabase retorna null)
-    const mockOrder = vi.fn().mockResolvedValue({ data: null, error: null });
-    const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
-    mockedSupabase.from.mockReturnValue({ select: mockSelect } as any);
+    const errorResponseMessage = 'Erro interno do servidor';
+    
+    // Mockar uma resposta com 'ok: false'
+    mockedApiGet.mockResolvedValue({
+      ok: false,
+      statusText: 'Internal Server Error',
+      json: async () => ({ message: errorResponseMessage }),
+    });
+
+    // Act
+    const { result } = renderHook(() => useProductsQuery(), {
+      wrapper: createWrapper(),
+    });
+
+    // Assert
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // A lógica de fetchProducts extrai a mensagem e lança um novo Error
+    expect(result.current.error).toEqual(new Error(errorResponseMessage));
+    expect(result.current.isSuccess).toBe(false);
+  });
+
+  it('DEVE retornar um array vazio se a API retornar "data" como null mas sem erro', async () => {
+    // Arrange
+    // (Cenário onde a query funciona mas não há dados, e a API retorna null)
+    mockedApiGet.mockResolvedValue({
+      ok: true,
+      json: async () => null,
+    });
 
     // Act
     const { result } = renderHook(() => useProductsQuery(), {

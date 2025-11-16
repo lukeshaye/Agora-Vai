@@ -3,34 +3,29 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 
-import { supabase } from '@/packages/lib/supabase';
+// VIOLAÇÃO CORRIGIDA: Remove a dependência de baixoível (supabase)
+// import { supabase } from '@/packages/lib/supabase';
+
+// CORREÇÃO (DIP): Importa a abstração (Hono RPC) para mocká-la
+import { api } from '@/packages/web/src/lib/api';
 import { ProductType } from '@/packages/shared-types';
 import { useUpdateProductMutation } from './useUpdateProductMutation';
 
-// 1. Mockar a chamada ao supabase (Princípio PTE 2.15)
+// 1. Mockar a chamada à abstração 'api' (Princípio PTE 2.15)
 // A implementação de updateProduct chama:
-// supabase.from('products').update(updateData).eq('id', id).select().single()
-vi.mock('@/packages/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn(() => ({
-      update: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          select: vi.fn(() => ({
-            single: vi.fn(),
-          })),
-        })),
-      })),
-    })),
+// api.products[':id'].$put({ param: { id }, json: updateData })
+vi.mock('@/packages/web/src/lib/api', () => ({
+  api: {
+    products: {
+      ':id': {
+        $put: vi.fn(),
+      },
+    },
   },
 }));
 
 // Typecasting para facilitar o uso do mock
-const mockedSupabase = supabase as vi.Mocked<typeof supabase>;
-const mockFrom = mockedSupabase.from as vi.Mock;
-const mockUpdate = vi.fn();
-const mockEq = vi.fn();
-const mockSelect = vi.fn();
-const mockSingle = vi.fn();
+const mockedApiPut = api.products[':id'].$put as vi.Mock;
 
 // 2. Criar um wrapper de teste para o React Query
 const createTestQueryClient = () => {
@@ -60,18 +55,6 @@ const createWrapper = () => {
 // 3. Limpar mocks antes de cada teste
 beforeEach(() => {
   vi.resetAllMocks();
-
-  // Reconfigurar a cadeia de mocks do Supabase
-  mockFrom.mockReturnValue({
-    update: mockUpdate.mockReturnValue({
-      eq: mockEq.mockReturnValue({
-        select: mockSelect.mockReturnValue({
-          single: mockSingle,
-        }),
-      }),
-    }),
-  } as any);
-
   if (queryClient) {
     queryClient.clear();
   }
@@ -107,8 +90,11 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
 
   it('DEVE atualizar um produto com sucesso e invalidar o cache de "products" (CQRS Command)', async () => {
     // Arrange
-    // Configura o mock para um retorno de sucesso
-    mockSingle.mockResolvedValue({ data: updatedProductData, error: null });
+    // Configura o mock da API para um retorno de sucesso
+    mockedApiPut.mockResolvedValue({
+      ok: true,
+      json: async () => updatedProductData,
+    });
 
     // Espiona o método invalidateQueries
     const wrapper = createWrapper();
@@ -125,13 +111,12 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
     // Aguarda a mutação ser concluída com sucesso
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    // 1. Verifica se o supabase foi chamado corretamente
-    expect(mockFrom).toHaveBeenCalledWith('products');
-    // Verifica se o 'id' foi removido dos dados de atualização
-    expect(mockUpdate).toHaveBeenCalledWith(updateData); 
-    expect(mockEq).toHaveBeenCalledWith('id', updatedProductData.id);
-    expect(mockSelect).toHaveBeenCalled();
-    expect(mockSingle).toHaveBeenCalled();
+    // 1. Verifica se a API foi chamada corretamente
+    expect(mockedApiPut).toHaveBeenCalledTimes(1);
+    expect(mockedApiPut).toHaveBeenCalledWith({
+      param: { id: updatedProductData.id.toString() },
+      json: updateData,
+    });
 
     // 2. Verifica se a mutação retornou os dados atualizados
     expect(result.current.data).toEqual(updatedProductData);
@@ -143,10 +128,14 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
     expect(result.current.isError).toBe(false);
   });
 
-  it('DEVE retornar um erro se a chamada ao supabase falhar e NÃO invalidar o cache', async () => {
+  it('DEVE retornar um erro se a chamada à API falhar (ok: false) e NÃO invalidar o cache', async () => {
     // Arrange
-    const mockError = new Error('Falha na atualização (ex: RLS)');
-    mockSingle.mockResolvedValue({ data: null, error: mockError });
+    const mockErrorMsg = 'Falha na atualização (ex: RLS)';
+    mockedApiPut.mockResolvedValue({
+      ok: false,
+      json: async () => ({ message: mockErrorMsg }),
+      statusText: 'Bad Request',
+    });
 
     // Espiona o método invalidateQueries
     const wrapper = createWrapper();
@@ -163,7 +152,7 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     // 1. Verifica se o erro foi propagado
-    expect(result.current.error).toEqual(mockError);
+    expect(result.current.error).toEqual(new Error(mockErrorMsg));
 
     // 2. Verifica se a mutação não foi bem-sucedida
     expect(result.current.isSuccess).toBe(false);
@@ -173,7 +162,7 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
     expect(invalidateQueriesSpy).not.toHaveBeenCalled();
   });
 
-  it('DEVE retornar um erro se o ID do produto não for fornecido', async () => {
+  it('DEVE retornar um erro se o ID do produto não for fornecido (erro síncrono)', async () => {
     // Arrange
     const productMissingId = {
       name: 'Produto sem ID',
@@ -187,7 +176,7 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
     });
 
     // Act
-    // A função `updateProduct` lança um erro síncrono antes mesmo do supabase ser chamado
+    // A função `updateProduct` lança um erro síncrono antes mesmo da API ser chamada
     result.current.mutate(productMissingId);
 
     // Assert
@@ -196,8 +185,7 @@ describe('useUpdateProductMutation (Teste de Hook - PTE 2.15)', () => {
     // Verifica se a mensagem de erro específica foi lançada
     expect(result.current.error?.message).toBe('ID do produto é necessário para atualização.');
 
-    // Garante que nenhuma chamada ao supabase foi feita
-    expect(mockFrom).not.toHaveBeenCalled();
-    expect(mockUpdate).not.toHaveBeenCalled();
+    // Garante que nenhuma chamada à API foi feita
+    expect(mockedApiPut).not.toHaveBeenCalled();
   });
 });

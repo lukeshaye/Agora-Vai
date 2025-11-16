@@ -4,35 +4,29 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { z } from 'zod';
 
-import { supabase } from '@/packages/lib/supabase';
+// import { supabase } from '@/packages/lib/supabase'; // <-- REMOVIDO (Não é mais a dependência)
+import { api } from '@/packages/web/src/lib/api'; // <-- ADICIONADO (Nova dependência - Abstração)
 import { CreateProductSchema } from '@/packages/shared-types';
 import { useAddProductMutation } from './useAddProductMutation';
 
-// 1. Mockar a chamada ao supabase (Princípio PTE 2.15)
-// A implementação de addProduct chama supabase.from('products').insert(...).select().single()
-vi.mock('@/packages/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn(() => ({
-      insert: vi.fn(() => ({
-        select: vi.fn(() => ({
-          single: vi.fn(),
-        })),
-      })),
-    })),
+// 1. Mockar a chamada à API (Hono RPC) (Princípio PTE 2.15 e DIP 2.9)
+// O hook agora chama 'api.products.$post'
+vi.mock('@/packages/web/src/lib/api', () => ({
+  api: {
+    products: {
+      $post: vi.fn(), // A função de 'escrita' (Command) que será mockada
+    },
   },
 }));
 
 // Typecasting para facilitar o uso do mock
-const mockedSupabase = supabase as vi.Mocked<typeof supabase>;
-const mockFrom = mockedSupabase.from as vi.Mock;
-const mockInsert = vi.fn();
-const mockSelect = vi.fn();
-const mockSingle = vi.fn();
+const mockedApi = api as vi.Mocked<typeof api>;
+const mockPost = mockedApi.products.$post; // Acesso direto à função mockada
 
 // O tipo de dados que a mutationFn receberá
 type ProductData = z.infer<typeof CreateProductSchema>;
 
-// 2. Criar um wrapper de teste para o React Query
+// 2. Criar um wrapper de teste para o React Query (Permanece o mesmo)
 const createTestQueryClient = () => {
   return new QueryClient({
     defaultOptions: {
@@ -59,16 +53,7 @@ const createWrapper = () => {
 
 // 3. Limpar mocks antes de cada teste
 beforeEach(() => {
-  vi.resetAllMocks();
-
-  // Reconfigurar a cadeia de mocks do Supabase para cada teste
-  mockFrom.mockReturnValue({
-    insert: mockInsert.mockReturnValue({
-      select: mockSelect.mockReturnValue({
-        single: mockSingle,
-      }),
-    }),
-  } as any);
+  vi.resetAllMocks(); // Limpa 'mockPost' e outros
 
   if (queryClient) {
     queryClient.clear();
@@ -82,7 +67,7 @@ afterEach(() => {
 // 4. Descrever os testes para o hook de mutação
 describe('useAddProductMutation (Teste de Hook - PTE 2.15)', () => {
   
-  // Mock de dados para o teste
+  // Mock de dados para o teste (Permanece o mesmo)
   const newProductData: ProductData = {
     name: 'Produto Teste',
     description: 'Descrição de teste',
@@ -93,18 +78,22 @@ describe('useAddProductMutation (Teste de Hook - PTE 2.15)', () => {
 
   const newlyCreatedProduct = {
     ...newProductData,
-    id: 123, // O que o supabase retornaria
-    tenant_id: 'mock-tenant-id', // O que o RLS/DB adicionaria
+    id: 'prod_123', // O que a API RPC retornaria
+    tenant_id: 'mock-tenant-id',
+    created_at: new Date().toISOString(),
   };
 
   it('DEVE adicionar um produto com sucesso e invalidar o cache de "products" (CQRS Command)', async () => {
     // Arrange
-    // Configura o mock para um retorno de sucesso
-    mockSingle.mockResolvedValue({ data: newlyCreatedProduct, error: null });
+    // Configura o mock da API para um retorno de sucesso
+    // A API Hono RPC retorna um objeto 'Response' (ou similar) com .ok e .json()
+    mockPost.mockResolvedValue({
+      ok: true,
+      json: async () => newlyCreatedProduct,
+    } as any); // 'as any' para simplificar o mock da 'Response'
 
     // Espiona o método invalidateQueries para verificar se foi chamado
-    // (Conforme 3.1.2.4 do Plano)
-    const wrapper = createWrapper(); // Cria o client
+    const wrapper = createWrapper();
     const invalidateQueriesSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(() => useAddProductMutation(), {
@@ -119,11 +108,9 @@ describe('useAddProductMutation (Teste de Hook - PTE 2.15)', () => {
     // Aguarda a mutação ser concluída com sucesso
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    // 1. Verifica se o supabase foi chamado corretamente
-    expect(mockFrom).toHaveBeenCalledWith('products');
-    expect(mockInsert).toHaveBeenCalledWith(newProductData);
-    expect(mockSelect).toHaveBeenCalled();
-    expect(mockSingle).toHaveBeenCalled();
+    // 1. Verifica se a API (abstração) foi chamada corretamente
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledWith({ json: newProductData });
 
     // 2. Verifica se a mutação retornou os dados corretos
     expect(result.current.data).toEqual(newlyCreatedProduct);
@@ -135,12 +122,15 @@ describe('useAddProductMutation (Teste de Hook - PTE 2.15)', () => {
     expect(result.current.isError).toBe(false);
   });
 
-  it('DEVE retornar um erro se a chamada ao supabase falhar e NÃO invalidar o cache', async () => {
+  it('DEVE retornar um erro se a chamada à API falhar e NÃO invalidar o cache', async () => {
     // Arrange
-    const mockError = new Error('Falha na inserção no Supabase');
+    const mockError = { error: 'Falha na inserção via API' };
 
-    // Configura o mock para um retorno de erro
-    mockSingle.mockResolvedValue({ data: null, error: mockError });
+    // Configura o mock da API para um retorno de erro (!res.ok)
+    mockPost.mockResolvedValue({
+      ok: false,
+      json: async () => mockError,
+    } as any);
 
     // Espiona o método invalidateQueries
     const wrapper = createWrapper();
@@ -158,7 +148,9 @@ describe('useAddProductMutation (Teste de Hook - PTE 2.15)', () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     // 1. Verifica se o erro foi propagado
-    expect(result.current.error).toEqual(mockError);
+    // O hook refatorado cria um 'new Error()' com a mensagem da API
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.error.message).toEqual(mockError.error);
 
     // 2. Verifica se a mutação não foi bem-sucedida
     expect(result.current.isSuccess).toBe(false);

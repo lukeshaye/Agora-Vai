@@ -1,21 +1,32 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/packages/lib/supabase';
+// VIOLAÇÃO CORRIGIDA: Remove a dependência direta do 'supabase' (baixoível).
+// import { supabase } from '@/packages/lib/supabase';
+
+// CORREÇÃO (DIP): Depende da abstração (cliente Hono RPC), conforme
+// identificado na análise como a arquitetura correta do projeto.
+import { api } from '@/packages/web/src/lib/api';
 import { ProductType } from '@/packages/shared-types';
 
 /**
- * Define a função assíncrona para buscar os produtos no Supabase.
- * A lógica é migrada do store.ts (fetchProducts), mas alinhada com o RLS.
+ * Define a função assíncrona para buscar os produtos através da camada de abstração (API).
+ * Esta função utiliza o cliente Hono RPC (api) para desacoplar o hook da
+ * implementação de baixoível (ex: Supabase), aderindo ao Princípio 2.9 (DIP).
  */
 const fetchProducts = async (): Promise<ProductType[]> => {
-  const { data, error } = await supabase
-    .from('products')
-    .select('*')
-    .order('name', { ascending: true });
+  // A chamada agora usa o cliente 'api' (abstração), não o 'supabase' (detalhe).
+  // Presume-se que existe uma rota 'GET /products' definida no backend Hono.
+  const res = await api.products.$get();
 
-  if (error) {
-    console.error('Error fetching products:', error.message);
-    throw new Error(error.message);
+  if (!res.ok) {
+    // Tenta extrair uma mensagem de erro do corpo da resposta
+    const errorData = await res.json().catch(() => ({ message: res.statusText }));
+    const errorMessage = errorData?.message || 'Failed to fetch products';
+    
+    console.error('Error fetching products:', errorMessage);
+    throw new Error(errorMessage);
   }
+
+  const data = await res.json();
 
   // Garante que estamos retornando um array, mesmo que data seja null
   return (data as ProductType[]) || [];
