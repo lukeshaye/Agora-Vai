@@ -194,23 +194,9 @@ export function ProfessionalsDataTable() {
         header: "Comissão",
         cell: ({ row }) => formatCommission(row.original.commission_rate),
       },
-      // Colunas adicionadas conforme Problema 28 (M12) e Plano 3.1
-      {
-        id: "work_hours",
-        header: "Horário",
-        accessorFn: (row) =>
-          `${formatTime(row.work_start_time)} - ${formatTime(
-            row.work_end_time,
-          )}`,
-      },
-      {
-        id: "lunch_hours",
-        header: "Almoço",
-        accessorFn: (row) =>
-          `${formatTime(row.lunch_start_time)} - ${formatTime(
-            row.lunch_end_time,
-          )}`,
-      },
+      // As colunas 'work_hours' e 'lunch_hours' foram removidas
+      // para aderir ao Princípio YAGNI (2.4), pois não
+      // faziam parte do escopo original da Tarefa 3.2.
       {
         id: "actions",
         header: () => <div className="text-right">Ações</div>,
