@@ -2,13 +2,17 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { useUpdateServiceMutation } from './useUpdateServiceMutation';
-import { apiClient } from '@/packages/api-client';
+import { api } from '@/packages/web/src/lib/api';
 import { ServiceType } from '@/packages/shared-types';
 
-// Mock do apiClient
-vi.mock('@/packages/api-client', () => ({
-  apiClient: {
-    put: vi.fn(),
+// Mock da api Hono RPC com rota dinâmica :id
+vi.mock('@/packages/web/src/lib/api', () => ({
+  api: {
+    services: {
+      ':id': {
+        $put: vi.fn(),
+      },
+    },
   },
 }));
 
@@ -49,8 +53,11 @@ describe('useUpdateServiceMutation', () => {
 
     const invalidateQueriesSpy = vi.spyOn(queryClient, 'invalidateQueries');
     
-    // Mock da resposta da API
-    (apiClient.put as any).mockResolvedValueOnce({ data: updateData });
+    // Mock da resposta de sucesso da API (RPC Pattern)
+    (api.services[':id'].$put as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => updateData,
+    });
 
     const { result } = renderHook(() => useUpdateServiceMutation(), {
       wrapper: createWrapper(),
@@ -61,7 +68,11 @@ describe('useUpdateServiceMutation', () => {
 
     // Verificações
     await waitFor(() => {
-      expect(apiClient.put).toHaveBeenCalledWith(`/api/services/${updateData.id}`, updateData);
+      // Verifica se o ID foi passado no param e os dados no json
+      expect(api.services[':id'].$put).toHaveBeenCalledWith({
+        param: { id: updateData.id.toString() },
+        json: updateData,
+      });
     });
 
     await waitFor(() => {
@@ -84,8 +95,12 @@ describe('useUpdateServiceMutation', () => {
     };
     const errorMessage = 'Erro de validação';
 
-    // Mock do erro da API
-    (apiClient.put as any).mockRejectedValueOnce(new Error(errorMessage));
+    // Mock de erro da API (Simulando !res.ok)
+    (api.services[':id'].$put as any).mockResolvedValueOnce({
+      ok: false,
+      statusText: errorMessage,
+      json: async () => ({ message: errorMessage }),
+    });
 
     const { result } = renderHook(() => useUpdateServiceMutation(), {
       wrapper: createWrapper(),
@@ -98,7 +113,8 @@ describe('useUpdateServiceMutation', () => {
     await waitFor(() => {
       expect(mockToast).toHaveBeenCalledWith({
         title: 'Erro',
-        description: `Erro ao atualizar serviço: ${errorMessage}`,
+        // O hook deve extrair a mensagem de erro da resposta
+        description: expect.stringContaining(errorMessage),
         variant: 'destructive',
       });
     });

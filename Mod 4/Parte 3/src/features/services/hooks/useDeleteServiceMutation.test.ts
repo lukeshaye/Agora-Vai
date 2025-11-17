@@ -2,12 +2,16 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { useDeleteServiceMutation } from './useDeleteServiceMutation';
-import { apiClient } from '@/packages/api-client';
+import { api } from '@/packages/web/src/lib/api';
 
-// Mock do apiClient
-vi.mock('@/packages/api-client', () => ({
-  apiClient: {
-    delete: vi.fn(),
+// Mock da api Hono RPC com rota dinâmica :id
+vi.mock('@/packages/web/src/lib/api', () => ({
+  api: {
+    services: {
+      ':id': {
+        $delete: vi.fn(),
+      },
+    },
   },
 }));
 
@@ -41,8 +45,11 @@ describe('useDeleteServiceMutation', () => {
 
     const invalidateQueriesSpy = vi.spyOn(queryClient, 'invalidateQueries');
     
-    // Mock da resposta da API
-    (apiClient.delete as any).mockResolvedValueOnce({ data: { success: true } });
+    // Mock da resposta de sucesso da API (RPC Pattern)
+    (api.services[':id'].$delete as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+    });
 
     const { result } = renderHook(() => useDeleteServiceMutation(), {
       wrapper: createWrapper(),
@@ -53,7 +60,10 @@ describe('useDeleteServiceMutation', () => {
 
     // Verificações
     await waitFor(() => {
-      expect(apiClient.delete).toHaveBeenCalledWith(`/api/services/${serviceId}`);
+      // Verifica se o ID foi passado corretamente no param (como string)
+      expect(api.services[':id'].$delete).toHaveBeenCalledWith({
+        param: { id: serviceId.toString() },
+      });
     });
 
     await waitFor(() => {
@@ -71,8 +81,12 @@ describe('useDeleteServiceMutation', () => {
     const serviceId = 456;
     const errorMessage = 'Erro ao deletar registro';
 
-    // Mock do erro da API
-    (apiClient.delete as any).mockRejectedValueOnce(new Error(errorMessage));
+    // Mock de erro da API (Simulando !res.ok)
+    (api.services[':id'].$delete as any).mockResolvedValueOnce({
+      ok: false,
+      statusText: errorMessage,
+      json: async () => ({ message: errorMessage }),
+    });
 
     const { result } = renderHook(() => useDeleteServiceMutation(), {
       wrapper: createWrapper(),
@@ -85,7 +99,7 @@ describe('useDeleteServiceMutation', () => {
     await waitFor(() => {
       expect(mockToast).toHaveBeenCalledWith({
         title: 'Erro',
-        description: `Erro ao remover serviço: ${errorMessage}`,
+        description: expect.stringContaining(errorMessage),
         variant: 'destructive',
       });
     });

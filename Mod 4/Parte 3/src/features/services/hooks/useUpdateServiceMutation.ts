@@ -1,5 +1,6 @@
+// hooks/useUpdateServiceMutation.ts
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '@/packages/api-client';
+import { api } from '@/packages/web/src/lib/api';
 import { ServiceType } from '@/packages/shared-types';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -9,8 +10,17 @@ export const useUpdateServiceMutation = () => {
 
   return useMutation({
     mutationFn: async (data: ServiceType) => {
-      const response = await apiClient.put(`/api/services/${data.id}`, data);
-      return response.data;
+      const res = await api.services[':id'].$put({
+        param: { id: data.id.toString() },
+        json: data,
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData?.message || res.statusText);
+      }
+
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });

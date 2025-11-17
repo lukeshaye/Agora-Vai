@@ -57,10 +57,8 @@ export function ServicesDataTable() {
   const deleteMutation = useDeleteServiceMutation();
 
   // 2. Estados Locais
-  // REMOVIDO: Estado de ordenação (YAGNI - não solicitado/implementado na UI)
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   
-  // Estado para Modais
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceType | null>(null);
   
@@ -104,7 +102,6 @@ export function ServicesDataTable() {
       header: 'Preço',
       cell: ({ row }) => {
         const amount = row.getValue('price') as number;
-        // CORREÇÃO: Substituído 'text-success' por classe padrão 'text-green-600' (Robustez)
         return <div className="font-medium text-green-600">{formatCurrency(amount)}</div>;
       },
     },
@@ -181,10 +178,8 @@ export function ServicesDataTable() {
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    // REMOVIDO: Lógica de ordenação (YAGNI)
     onColumnFiltersChange: setColumnFilters,
     state: {
-      // REMOVIDO: sorting
       columnFilters,
     },
   });
@@ -253,7 +248,6 @@ export function ServicesDataTable() {
             />
           </div>
         </div>
-        {/* CORREÇÃO: Removido gradiente hardcoded (CDA), usando variante padrão do componente */}
         <Button 
           onClick={handleNewService}
           className="w-full sm:w-auto"
@@ -328,7 +322,7 @@ export function ServicesDataTable() {
         </Table>
       </div>
 
-      {/* Paginação (Opcional, mas boa prática com shadcn DataTable) */}
+      {/* Paginação */}
       <div className="flex items-center justify-end space-x-2 py-4">
         <Button
           variant="outline"

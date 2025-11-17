@@ -1,5 +1,6 @@
+// hooks/useDeleteServiceMutation.ts
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '@/packages/api-client';
+import { api } from '@/packages/web/src/lib/api';
 import { useToast } from '@/components/ui/use-toast';
 
 export const useDeleteServiceMutation = () => {
@@ -8,8 +9,16 @@ export const useDeleteServiceMutation = () => {
 
   return useMutation({
     mutationFn: async (serviceId: number) => {
-      const response = await apiClient.delete(`/api/services/${serviceId}`);
-      return response.data;
+      const res = await api.services[':id'].$delete({
+        param: { id: serviceId.toString() },
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData?.message || res.statusText);
+      }
+
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });
