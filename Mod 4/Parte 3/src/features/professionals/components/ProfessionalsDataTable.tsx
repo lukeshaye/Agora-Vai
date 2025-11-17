@@ -8,6 +8,7 @@
 * - PGEC (2.13): Consome o hook useProfessionalsQuery e trata estados de loading/erro.
 * - SoC (2.5) / CQRS (2.12): Delega lógica de escrita (create/update/delete) aos hooks e modais.
 * - PTE (2.15): Agnóstico à lógica de exclusão, apenas chama o hook.
+* - DRY (2.2): Utiliza formatCurrency de @/lib/utils.
 */
 
 "use client"
@@ -67,23 +68,16 @@ import { useDeleteProfessionalMutation } from "../hooks/useDeleteProfessionalMut
 import { ProfessionalFormModal } from "./ProfessionalFormModal"
 
 // --- Importações de Tipos ---
-import { ProfessionalType } from "@/@types/shared-types" // Atualizado para o novo caminho de tipos
+import { ProfessionalType } from "@/@types/shared-types"
+
+// --- Importações de Utilitários Compartilhados (DRY) ---
+import { formatCurrency } from "@/lib/utils"
 
 // --- Funções Utilitárias Locais ---
 
 /**
- * Formata um valor em centavos para BRL (ex: 15000 -> R$ 150,00).
- */
-const formatCentsToBRL = (cents: number | null | undefined) => {
-  if (cents == null) return "N/D"
-  return (cents / 100).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  })
-}
-
-/**
  * Formata uma taxa de comissão (ex: 0.1 -> 10%).
+ * Nota: Mantido local por enquanto, mas candidato a ir para utils se usado em outros lugares.
  */
 const formatCommission = (rate: number | null | undefined) => {
   if (rate == null) return "0%"
@@ -92,6 +86,7 @@ const formatCommission = (rate: number | null | undefined) => {
 
 /**
  * Formata um horário (ex: "09:00:00" -> "09:00").
+ * Nota: Mantido local pois é específico de formatação de string de hora parcial.
  */
 const formatTime = (time: string | null | undefined) => {
   if (!time) return "N/D"
@@ -187,7 +182,11 @@ export function ProfessionalsDataTable() {
       {
         accessorKey: "salary",
         header: "Salário Base",
-        cell: ({ row }) => formatCentsToBRL(row.original.salary),
+        cell: ({ row }) => {
+          const salary = row.original.salary
+          // Correção DRY: Usa formatCurrency compartilhado, tratando nulos explicitamente
+          return salary != null ? formatCurrency(salary) : "N/D"
+        },
       },
       {
         accessorKey: "commission_rate",
@@ -195,8 +194,7 @@ export function ProfessionalsDataTable() {
         cell: ({ row }) => formatCommission(row.original.commission_rate),
       },
       // As colunas 'work_hours' e 'lunch_hours' foram removidas
-      // para aderir ao Princípio YAGNI (2.4), pois não
-      // faziam parte do escopo original da Tarefa 3.2.
+      // para aderir ao Princípio YAGNI (2.4).
       {
         id: "actions",
         header: () => <div className="text-right">Ações</div>,
@@ -229,8 +227,6 @@ export function ProfessionalsDataTable() {
         },
       },
     ],
-    // Handlers não são necessários como dependências, pois as funções de célula
-    // são chamadas com o contexto da linha e podem invocar os handlers do componente pai.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   )
