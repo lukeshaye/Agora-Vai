@@ -1,11 +1,11 @@
 // /packages/web/src/features/settings/components/WorkingHoursForm.tsx
 
 import { useEffect, useState, useCallback } from 'react';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Clock, Plus, Trash2, Save, AlertTriangle, Loader2 } from 'lucide-react';
-import moment from 'moment';
+import dayjs from 'dayjs'; // CORREÇÃO C: Substituição de moment por dayjs (Padrão do Projeto)
 
 // Imports de UI (shadcn/ui)
 import {
@@ -48,7 +48,12 @@ import {
   useDeleteBusinessExceptionMutation,
 } from '../hooks/useUpdateSettingsMutation';
 
-// --- MOCK CONSTANTS & SCHEMAS (para simular a arquitetura) ---
+// CORREÇÃO B (DRY - Princípio 2.2): 
+// Importação dos schemas canônicos em vez de redefinição manual.
+// Assumindo que este arquivo existe com base no prompt.
+import { BusinessHoursSchema, BusinessExceptionSchema } from '../schemas/settings.schema'; 
+
+// --- CONSTANTS & ADAPTERS ---
 const DAYS_OF_WEEK = [
   { value: 0, label: 'Domingo' }, { value: 1, label: 'Segunda-feira' },
   { value: 2, label: 'Terça-feira' }, { value: 3, label: 'Quarta-feira' },
@@ -56,29 +61,15 @@ const DAYS_OF_WEEK = [
   { value: 6, label: 'Sábado' },
 ];
 
-const TIME_REGEX = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-
-const workingHoursSchema = z.object({
-  hours: z.array(z.object({
-    day_of_week: z.number().min(0).max(6),
-    is_active: z.boolean(),
-    start_time: z.string().regex(TIME_REGEX, "HH:MM inválido").nullable(),
-    end_time: z.string().regex(TIME_REGEX, "HH:MM inválido").nullable(),
-  })).refine(data => data.every(h => !h.is_active || (h.start_time && h.end_time)), {
-    message: "Horário de início e fim são obrigatórios para dias ativos.",
-    path: ["hours"],
-  }),
+// Adaptação para o Form: O formulário espera um objeto wrapper { hours: [...] }
+// O BusinessHoursSchema valida a entidade individual (ou a lista, dependendo da implementação do backend).
+// Aqui compomos o schema do formulário reutilizando a regra canônica.
+const formWorkingHoursSchema = z.object({
+  hours: z.array(BusinessHoursSchema)
 });
 
-const businessExceptionSchema = z.object({
-  description: z.string().min(1, "Descrição é obrigatória"),
-  exception_date: z.date({ invalid_type_error: "Data é obrigatória" }),
-  start_time: z.string().regex(TIME_REGEX, "HH:MM inválido").nullable().optional().or(z.literal('')),
-  end_time: z.string().regex(TIME_REGEX, "HH:MM inválido").nullable().optional().or(z.literal('')),
-});
-
-type WorkingHoursFormData = z.infer<typeof workingHoursSchema>;
-type BusinessExceptionFormData = z.infer<typeof businessExceptionSchema>;
+type WorkingHoursFormData = z.infer<typeof formWorkingHoursSchema>;
+type BusinessExceptionFormData = z.infer<typeof BusinessExceptionSchema>;
 
 interface BusinessException {
   id: number;
@@ -111,13 +102,13 @@ export const WorkingHoursForm = () => {
   const [isExceptionModalOpen, setIsExceptionModalOpen] = useState(false);
   const [exceptionToDelete, setExceptionToDelete] = useState<BusinessException | null>(null);
 
-  // CORREÇÃO 2222: Estado local para inputs de "Aplicar a Todos"
+  // Estado local para inputs de "Aplicar a Todos"
   const [applyStartTime, setApplyStartTime] = useState('09:00');
   const [applyEndTime, setApplyEndTime] = useState('18:00');
 
   // 3. Formulário de Horários
   const hoursForm = useForm<WorkingHoursFormData>({
-    resolver: zodResolver(workingHoursSchema),
+    resolver: zodResolver(formWorkingHoursSchema), // Usa o schema composto com a fonte de verdade
     defaultValues: DEFAULT_HOURS,
   });
 
@@ -126,12 +117,13 @@ export const WorkingHoursForm = () => {
 
   // 4. Formulário de Exceções
   const exceptionForm = useForm<BusinessExceptionFormData>({
-    resolver: zodResolver(businessExceptionSchema),
+    resolver: zodResolver(BusinessExceptionSchema), // Usa diretamente o schema canônico
     defaultValues: {
       description: '',
-      exception_date: moment().startOf('day').toDate(),
-      start_time: '09:00', // Padrão
-      end_time: '18:00',   // Padrão
+      // CORREÇÃO C: Uso de dayjs
+      exception_date: dayjs().startOf('day').toDate(),
+      start_time: '09:00',
+      end_time: '18:00',
     },
   });
 
@@ -139,7 +131,7 @@ export const WorkingHoursForm = () => {
   useEffect(() => {
     if (data?.businessHours) {
       const hoursData = DEFAULT_HOURS.hours.map(defaultHour => {
-        const existing = data.businessHours.find(h => h.day_of_week === defaultHour.day_of_week);
+        const existing = data.businessHours.find((h: any) => h.day_of_week === defaultHour.day_of_week);
         return {
           day_of_week: defaultHour.day_of_week,
           is_active: !!(existing?.start_time && existing?.end_time),
@@ -152,7 +144,6 @@ export const WorkingHoursForm = () => {
   }, [data, resetHoursForm]);
 
   // --- Lógica de Aplicação Rápida (Apply to All Days) ---
-  // CORREÇÃO 2222: Usa os valores do estado local (applyStartTime, applyEndTime)
   const applyToAllDays = useCallback((startTime: string, endTime: string) => {
     if (!startTime || !endTime) {
       toast.warning('Preencha os horários de início e fim para aplicar a todos.');
@@ -160,11 +151,9 @@ export const WorkingHoursForm = () => {
     }
 
     fields.forEach((field, index) => {
-      // Aplica apenas se o dia estiver ativo no checklist
       if (watch(`hours.${index}.is_active`)) {
         setValue(`hours.${index}.start_time`, startTime, { shouldValidate: true });
         setValue(`hours.${index}.end_time`, endTime, { shouldValidate: true });
-        // Garantir que a formatação do input seja atualizada
         update(index, { ...field, start_time: startTime, end_time: endTime });
       }
     });
@@ -173,7 +162,6 @@ export const WorkingHoursForm = () => {
 
   // --- Handlers de Horários (Update Hours) ---
   const onSubmitHours = (formData: WorkingHoursFormData) => {
-    // Filtrar apenas os dias ativos para enviar ao backend
     const hoursToUpsert = formData.hours.map(h => ({
         day_of_week: h.day_of_week,
         start_time: h.is_active ? h.start_time : null,
@@ -186,7 +174,8 @@ export const WorkingHoursForm = () => {
   const onSubmitException = (formData: BusinessExceptionFormData) => {
     const exceptionData = {
       description: formData.description,
-      exception_date: moment(formData.exception_date).format('YYYY-MM-DD'),
+      // CORREÇÃO C: Uso de dayjs para formatar
+      exception_date: dayjs(formData.exception_date).format('YYYY-MM-DD'),
       start_time: formData.start_time || null,
       end_time: formData.end_time || null,
     };
@@ -196,7 +185,8 @@ export const WorkingHoursForm = () => {
         setIsExceptionModalOpen(false);
         exceptionForm.reset({
           description: '',
-          exception_date: moment().startOf('day').toDate(),
+          // CORREÇÃO C: Uso de dayjs
+          exception_date: dayjs().startOf('day').toDate(),
           start_time: '09:00',
           end_time: '18:00',
         });
@@ -204,7 +194,6 @@ export const WorkingHoursForm = () => {
     });
   };
 
-  // CORREÇÃO 1111: Função que executa a mutação de exclusão
   const handleConfirmDeleteException = () => {
     if (exceptionToDelete?.id) {
       deleteException(exceptionToDelete.id, {
@@ -250,7 +239,6 @@ export const WorkingHoursForm = () => {
               <div className="bg-muted p-5 rounded-lg border border-border">
                 <h4 className="text-sm font-semibold text-foreground mb-3">Aplicar Horário a Todos os Dias Ativos</h4>
                 <div className="flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-3">
-                  {/* CORREÇÃO 2222: Inputs controlados por useState */}
                   <Input 
                     type="time" 
                     className="w-full sm:w-auto" 
@@ -269,7 +257,6 @@ export const WorkingHoursForm = () => {
                   <Button
                     type="button"
                     variant="secondary"
-                    // CORREÇÃO 2222: Chamada da função com valores do estado
                     onClick={() => applyToAllDays(applyStartTime, applyEndTime)}
                     className="w-full sm:w-auto"
                   >
@@ -294,7 +281,6 @@ export const WorkingHoursForm = () => {
                               <Checkbox
                                 checked={checkboxField.value}
                                 onCheckedChange={(checked) => {
-                                    // Se desativa, limpa os campos de tempo.
                                     if (!checked) {
                                         setValue(`hours.${index}.start_time`, null);
                                         setValue(`hours.${index}.end_time`, null);
@@ -354,7 +340,6 @@ export const WorkingHoursForm = () => {
                 ))}
               </div>
 
-              {/* Botão Salvar */}
               <div className="flex justify-end pt-4">
                 <Button type="submit" disabled={isSavingHours}>
                   {isSavingHours && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -366,6 +351,7 @@ export const WorkingHoursForm = () => {
           </Form>
         </CardContent>
       </Card>
+
       {/* ----------------------------------------------------------- */}
       {/* SEÇÃO 2: EXCEÇÕES E FERIADOS */}
       {/* ----------------------------------------------------------- */}
@@ -382,7 +368,6 @@ export const WorkingHoursForm = () => {
                   <Plus className="w-4 h-4 mr-2" /> Nova Exceção
                 </Button>
               </DialogTrigger>
-              {/* --- MODAL DE NOVA EXCEÇÃO --- */}
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle>Adicionar Exceção de Horário</DialogTitle>
@@ -411,10 +396,11 @@ export const WorkingHoursForm = () => {
                                 <FormItem>
                                     <FormLabel>Data *</FormLabel>
                                     <FormControl>
+                                        {/* CORREÇÃO C: Input Date com dayjs */}
                                         <Input 
                                             type="date" 
-                                            value={moment(field.value).format('YYYY-MM-DD')}
-                                            onChange={(e) => field.onChange(moment(e.target.value).toDate())}
+                                            value={field.value ? dayjs(field.value).format('YYYY-MM-DD') : ''}
+                                            onChange={(e) => field.onChange(dayjs(e.target.value).toDate())}
                                         />
                                     </FormControl>
                                     <FormMessage />
@@ -480,7 +466,8 @@ export const WorkingHoursForm = () => {
                   <div>
                     <p className="font-semibold text-foreground">{exception.description}</p>
                     <div className="text-sm text-muted-foreground mt-1 flex items-center space-x-2">
-                        <span>{moment(exception.exception_date).format('DD/MM/YYYY')}</span>
+                        {/* CORREÇÃO C: Formatação com dayjs */}
+                        <span>{dayjs(exception.exception_date).format('DD/MM/YYYY')}</span>
                         <span className="text-xs text-primary">•</span>
                         {exception.start_time && exception.end_time ? (
                             <span>{exception.start_time} - {exception.end_time}</span>
@@ -489,7 +476,6 @@ export const WorkingHoursForm = () => {
                         )}
                     </div>
                   </div>
-                  {/* CORREÇÃO 1111: O botão de exclusão agora APENAS define o estado, disparando o modal global */}
                   <Button 
                       variant="ghost" 
                       size="icon" 
@@ -505,7 +491,6 @@ export const WorkingHoursForm = () => {
         </CardContent>
       </Card>
 
-      {/* CORREÇÃO 1111: ÚNICO MODAL GLOBAL de Confirmação de Exclusão */}
       <AlertDialog open={!!exceptionToDelete} onOpenChange={() => setExceptionToDelete(null)}>
         <AlertDialogContent>
             <AlertDialogHeader>
