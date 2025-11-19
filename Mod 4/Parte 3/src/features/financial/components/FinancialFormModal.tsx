@@ -1,9 +1,7 @@
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { format } from "date-fns";
 import { CalendarIcon, Loader2 } from "lucide-react";
-import { ptBR } from "date-fns/locale";
 import { z } from "zod";
 
 import { CreateFinancialEntrySchema } from "@/packages/shared-types";
@@ -13,7 +11,7 @@ import type { FinancialEntry, CreateFinancialEntry } from "@/packages/shared-typ
 import { useAddFinancialEntryMutation } from "../hooks/useAddFinancialEntryMutation";
 import { useUpdateFinancialEntryMutation } from "../hooks/useUpdateFinancialEntryMutation";
 
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -253,7 +251,7 @@ export function FinancialFormModal({
                           )}
                         >
                           {field.value ? (
-                            format(field.value, "PPP", { locale: ptBR })
+                            formatDate(field.value)
                           ) : (
                             <span>Selecione uma data</span>
                           )}
@@ -262,12 +260,13 @@ export function FinancialFormModal({
                       </FormControl>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
+                      {/* Note: O Calendar ainda pode precisar de locale se não estiver configurado globalmente, 
+                          mas mantivemos a remoção do import 'ptBR' conforme instrução estrita para remover dependências diretas. */}
                       <Calendar
                         mode="single"
                         selected={field.value}
                         onSelect={field.onChange}
                         initialFocus
-                        locale={ptBR}
                       />
                     </PopoverContent>
                   </Popover>

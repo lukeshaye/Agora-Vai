@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { MoreHorizontal, ArrowUpDown, Edit, Trash2, Plus, Search } from 'lucide-react';
 
 import { useFinancialEntriesQuery } from '../hooks/useFinancialEntriesQuery';
