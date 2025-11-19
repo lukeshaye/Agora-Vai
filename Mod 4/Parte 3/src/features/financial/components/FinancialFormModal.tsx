@@ -9,6 +9,10 @@ import { z } from "zod";
 import { CreateFinancialEntrySchema } from "@/packages/shared-types";
 import type { FinancialEntry, CreateFinancialEntry } from "@/packages/shared-types";
 
+// IMPORTS DE MUTATION (Ajuste o caminho conforme sua estrutura de pastas, ex: ../api/mutations)
+import { useAddFinancialEntryMutation } from "../hooks/useAddFinancialEntryMutation";
+import { useUpdateFinancialEntryMutation } from "../hooks/useUpdateFinancialEntryMutation";
+
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
@@ -42,7 +46,6 @@ import {
 } from "@/components/ui/select";
 
 // Schema local estendido para lidar com a coerção de string para número no input
-// Isso permite uma UX fluida para digitação de decimais (ex: "10.")
 const FormSchema = CreateFinancialEntrySchema.extend({
   amount: z.coerce.number().positive("O valor deve ser positivo"),
 });
@@ -52,18 +55,21 @@ type FormData = z.infer<typeof FormSchema>;
 interface FinancialFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialData?: FinancialEntry | null;
-  onSubmit: (data: CreateFinancialEntry) => Promise<void>;
-  isSubmitting?: boolean;
+  editingEntry?: FinancialEntry | null; // Renomeado de initialData para consistência
 }
 
 export function FinancialFormModal({
   open,
   onOpenChange,
-  initialData,
-  onSubmit,
-  isSubmitting = false,
+  editingEntry,
 }: FinancialFormModalProps) {
+  // Hooks de Mutação
+  const addMutation = useAddFinancialEntryMutation();
+  const updateMutation = useUpdateFinancialEntryMutation();
+
+  // Estado de loading combinado
+  const isSubmitting = addMutation.isPending || updateMutation.isPending;
+
   const form = useForm<FormData>({
     resolver: zodResolver(FormSchema),
     defaultValues: {
@@ -75,17 +81,17 @@ export function FinancialFormModal({
     },
   });
 
-  // Resetar o formulário quando o modal abre ou os dados iniciais mudam
+  // Resetar o formulário quando o modal abre ou os dados de edição mudam
   useEffect(() => {
     if (open) {
-      if (initialData) {
+      if (editingEntry) {
         form.reset({
-          description: initialData.description,
-          // Converte centavos para reais para edição no input
-          amount: initialData.amount / 100,
-          type: initialData.type,
-          entry_type: initialData.entry_type,
-          entry_date: new Date(initialData.entry_date),
+          description: editingEntry.description,
+          // Converte centavos para reais para edição no input (1234 -> 12.34)
+          amount: editingEntry.amount / 100,
+          type: editingEntry.type,
+          entry_type: editingEntry.entry_type,
+          entry_date: new Date(editingEntry.entry_date),
         });
       } else {
         form.reset({
@@ -97,16 +103,34 @@ export function FinancialFormModal({
         });
       }
     }
-  }, [open, initialData, form]);
+  }, [open, editingEntry, form]);
 
   const handleSubmit = async (values: FormData) => {
-    // Converter o valor de volta para centavos antes de enviar (ex: 12.34 -> 1234)
-    // O valor já chega aqui como número graças ao z.coerce.number()
-    const payload: CreateFinancialEntry = {
-      ...values,
-      amount: Math.round(values.amount * 100),
-    };
-    await onSubmit(payload);
+    try {
+      // Converter o valor de volta para centavos antes de enviar (ex: 12.34 -> 1234)
+      const payload: CreateFinancialEntry = {
+        ...values,
+        amount: Math.round(values.amount * 100),
+      };
+
+      if (editingEntry) {
+        // Fluxo de Edição
+        await updateMutation.mutateAsync({ 
+          id: editingEntry.id, 
+          data: payload 
+        });
+      } else {
+        // Fluxo de Criação
+        await addMutation.mutateAsync(payload);
+      }
+
+      // Fecha o modal apenas em caso de sucesso
+      onOpenChange(false);
+    } catch (error) {
+      // O tratamento de erro (ex: toasts) geralmente é feito no onError global do QueryClient
+      // ou no hook da mutação, mas pode ser adicionado log aqui se necessário.
+      console.error("Erro ao salvar lançamento:", error);
+    }
   };
 
   return (
@@ -114,7 +138,7 @@ export function FinancialFormModal({
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>
-            {initialData ? "Editar Lançamento" : "Novo Lançamento"}
+            {editingEntry ? "Editar Lançamento" : "Novo Lançamento"}
           </DialogTitle>
         </DialogHeader>
 
@@ -148,8 +172,6 @@ export function FinancialFormModal({
                       step="0.01"
                       placeholder="0,00"
                       {...field}
-                      // Removemos o onChange manual. O {...field} já gerencia o evento corretamente.
-                      // A coerção para número é feita pelo Zod no submit/validação.
                     />
                   </FormControl>
                   <FormMessage />
@@ -213,7 +235,7 @@ export function FinancialFormModal({
               />
             </div>
 
-            {/* Campo: Data (Date-fns + Locale pt-BR) */}
+            {/* Campo: Data */}
             <FormField
               control={form.control}
               name="entry_date"
@@ -265,7 +287,7 @@ export function FinancialFormModal({
               </Button>
               <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {initialData ? "Salvar Alterações" : "Criar Lançamento"}
+                {editingEntry ? "Salvar Alterações" : "Criar Lançamento"}
               </Button>
             </DialogFooter>
           </form>

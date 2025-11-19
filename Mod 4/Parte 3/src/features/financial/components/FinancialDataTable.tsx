@@ -28,35 +28,44 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { MoreHorizontal, ArrowUpDown, Edit, Trash2 } from 'lucide-react';
+import { ConfirmationModal } from '@/components/ui/ConfirmationModal';
+import { MoreHorizontal, ArrowUpDown, Edit, Trash2, Plus, Search } from 'lucide-react';
 
 import { useFinancialEntriesQuery } from '../hooks/useFinancialEntriesQuery';
 import { useDeleteFinancialEntryMutation } from '../hooks/useDeleteFinancialEntryMutation';
+import { FinancialFormModal } from './FinancialFormModal';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { FinancialEntry } from '@/packages/shared-types';
 
-interface FinancialDataTableProps {
-  onEdit: (entry: FinancialEntry) => void;
-}
-
-export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
+export function FinancialDataTable() {
+  // 1. Hooks de Data Fetching
   const { data: entries = [], isLoading, isError } = useFinancialEntriesQuery();
   const { mutate: deleteEntry, isPending: isDeleting } = useDeleteFinancialEntryMutation();
 
+  // 2. Estados Locais (Gerenciamento autônomo da UI)
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [globalFilter, setGlobalFilter] = useState('');
+  
+  // Estado do Modal de Formulário (Criação/Edição)
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<FinancialEntry | null>(null);
+
+  // Estado do Modal de Exclusão
   const [entryToDelete, setEntryToDelete] = useState<FinancialEntry | null>(null);
+
+  // 3. Handlers Internos
+  const handleNewEntry = () => {
+    setEditingEntry(null); // Garante modo de criação
+    setIsFormOpen(true);
+  };
+
+  const handleEditEntry = (entry: FinancialEntry) => {
+    setEditingEntry(entry); // Garante modo de edição
+    setIsFormOpen(true);
+  };
 
   const handleDeleteClick = (entry: FinancialEntry) => {
     setEntryToDelete(entry);
@@ -72,6 +81,7 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
     }
   };
 
+  // 4. Definição de Colunas
   const columns: ColumnDef<FinancialEntry>[] = [
     {
       accessorKey: 'entry_date',
@@ -99,7 +109,10 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
       cell: ({ row }) => {
         const type = row.getValue('type') as string;
         return (
-          <Badge variant={type === 'receita' ? 'default' : 'destructive'} className={type === 'receita' ? 'bg-green-600 hover:bg-green-700' : ''}>
+          <Badge 
+            variant={type === 'receita' ? 'default' : 'destructive'} 
+            className={type === 'receita' ? 'bg-green-600 hover:bg-green-700' : ''}
+          >
             {type === 'receita' ? 'Receita' : 'Despesa'}
           </Badge>
         );
@@ -130,7 +143,6 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
         const amount = parseFloat(row.getValue('amount'));
         const type = row.original.type;
         
-        // Formatação condicional de cor
         const colorClass = type === 'receita' ? 'text-green-600' : 'text-red-600';
         
         return (
@@ -156,7 +168,7 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Ações</DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => onEdit(entry)}>
+              <DropdownMenuItem onClick={() => handleEditEntry(entry)}>
                 <Edit className="mr-2 h-4 w-4" /> Editar
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -173,6 +185,7 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
     },
   ];
 
+  // 5. Configuração da Tabela
   const table = useReactTable({
     data: entries,
     columns,
@@ -181,16 +194,22 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    onGlobalFilterChange: setGlobalFilter,
     state: {
       sorting,
+      globalFilter,
     },
   });
 
+  // 6. Renderização Condicional de Loading/Erro
   if (isLoading) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-4 w-full">
+        <div className="flex justify-between">
+           <Skeleton className="h-10 w-[250px]" />
+           <Skeleton className="h-10 w-[150px]" />
+        </div>
         <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-20 w-full" />
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-20 w-full" />
       </div>
@@ -198,11 +217,28 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
   }
 
   if (isError) {
-    return <div className="text-center text-destructive py-4">Erro ao carregar lançamentos.</div>;
+    return <div className="text-center text-destructive py-8">Erro ao carregar lançamentos financeiros.</div>;
   }
 
   return (
-    <div className="w-full">
+    <div className="w-full space-y-4">
+      {/* Header da Tabela: Filtros e Ações */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="relative w-full max-w-sm">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Filtrar lançamentos..."
+              value={globalFilter ?? ''}
+              onChange={(event) => setGlobalFilter(event.target.value)}
+              className="pl-8"
+            />
+        </div>
+        <Button onClick={handleNewEntry}>
+          <Plus className="mr-2 h-4 w-4" /> Novo Lançamento
+        </Button>
+      </div>
+
+      {/* Tabela */}
       <div className="rounded-md border">
         <Table>
           <TableHeader>
@@ -254,7 +290,8 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
         </Table>
       </div>
       
-      <div className="flex items-center justify-end space-x-2 py-4">
+      {/* Paginação */}
+      <div className="flex items-center justify-end space-x-2">
         <Button
           variant="outline"
           size="sm"
@@ -273,30 +310,22 @@ export function FinancialDataTable({ onEdit }: FinancialDataTableProps) {
         </Button>
       </div>
 
-      <AlertDialog open={!!entryToDelete} onOpenChange={(open) => !open && setEntryToDelete(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Tem certeza absoluta?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação não pode ser desfeita. Isso excluirá permanentemente o lançamento
-              "{entryToDelete?.description}" e removerá os dados de nossos servidores.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                confirmDelete();
-              }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={isDeleting}
-            >
-              {isDeleting ? 'Excluindo...' : 'Excluir'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Modais Gerenciados Internamente */}
+      <FinancialFormModal 
+        open={isFormOpen}
+        onOpenChange={setIsFormOpen}
+        editingEntry={editingEntry}
+      />
+
+      <ConfirmationModal
+        isOpen={!!entryToDelete}
+        onClose={() => setEntryToDelete(null)}
+        onConfirm={confirmDelete}
+        title="Excluir Lançamento"
+        description={`Tem certeza que deseja excluir o lançamento "${entryToDelete?.description}"? Esta ação não pode ser desfeita.`}
+        variant="destructive"
+        isLoading={isDeleting}
+      />
     </div>
   );
 }
