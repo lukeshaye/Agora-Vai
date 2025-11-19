@@ -12,7 +12,7 @@ interface ConfirmationModalProps {
   isLoading?: boolean;
 }
 
-export default function ConfirmationModal({
+export function ConfirmationModal({
   isOpen,
   onClose,
   onConfirm,
@@ -109,4 +109,5 @@ export default function ConfirmationModal({
       </div>
     </div>
   );
+
 }
