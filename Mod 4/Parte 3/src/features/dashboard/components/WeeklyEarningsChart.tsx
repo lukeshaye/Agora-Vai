@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { formatCurrency } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -29,14 +30,6 @@ export function WeeklyEarningsChart({
   const maxAmount = useMemo(() => {
     return Math.max(...data.map(d => d.amount), 0);
   }, [data]);
-
-  // Formatação de moeda para exibição
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-    }).format(value);
-  };
 
   if (isLoading) {
     return (
